@@ -61,8 +61,6 @@ Camera / PushAimer / App / BallState
         └─────────────────────[ DEAD ] ◄──────────────────┘
 ```
 
-See ![State Diagram](./State_Diagram.svg) for the full rendered diagram.
-
 
 ## PID Controller
 ```
