@@ -1,0 +1,105 @@
+@startuml Ball_Plate_State_Diagram
+
+' 1. Bố cục từ trái sang phải (phù hợp với slide ngang)
+left to right direction
+
+' 2. Giới hạn kích thước xuất ảnh tối đa bằng đúng chuẩn slide PowerPoint 1080p (16:9)
+scale max 1920 width
+scale max 1080 height
+
+' 3. Điều chỉnh khoảng cách để ép sơ đồ trải dài ra
+skinparam ranksep 100    ' Tăng khoảng cách ngang giữa các state
+skinparam nodesep 50     ' Thu gọn khoảng cách dọc giữa các state
+
+' 4. Dùng nét gấp khúc vuông góc giúp sơ đồ gọn gàng, không bị rối mắt trên màn hình lớn
+skinparam linetype ortho
+
+skinparam state {
+  BackgroundColor LightBlue
+  BorderColor DarkBlue
+  FontSize 13
+  ArrowColor DarkSlateGray
+}
+
+skinparam backgroundColor White
+skinparam shadowing false
+
+title Ball & Plate — PID Simulation : Ball State Machine
+
+[*] --> IDLE
+
+state IDLE {
+  [*] --> waiting
+  waiting : No ball exists
+}
+
+state DRAGGING {
+  [*] --> holding
+  holding : Ball follows cursor
+  holding : vx = vy = vz = 0
+}
+
+state AIRBORNE {
+  [*] --> falling
+  falling : Gravity applied
+  falling : ax, ay from plate tilt
+}
+
+state BOUNCING {
+  [*] --> rebound
+  rebound : vz = vz × RESTITUTION
+  rebound : vx, vy × BOUNCE_FRICTION
+}
+
+state ON_PLATE {
+  [*] --> balancing
+  balancing : PID active (full weight = 1.0)
+  balancing : Rolling friction applied
+}
+
+state ORBIT_TRACKING {
+  [*] --> chasing
+  chasing : Setpoint orbits in circle
+  chasing : PID chases moving target
+}
+
+state DEAD {
+  [*] --> lost
+  lost : drops++
+  lost : ball = None
+}
+
+' ── Main transitions ──────────────────────────────────
+
+IDLE --> DRAGGING       : LMB click\n(normal mode)
+IDLE --> AIRBORNE       : [T] Throw mode\nLMB release
+
+DRAGGING --> DRAGGING   : Mouse move\n(update XY and Z)
+DRAGGING --> AIRBORNE   : LMB release\n(vx=vy=vz=0)
+
+AIRBORNE --> BOUNCING   : z ≤ plate_z AND\nimpact_speed ≥ MIN_BOUNCE
+AIRBORNE --> ON_PLATE   : z ≤ plate_z AND\nimpact_speed < MIN_BOUNCE
+AIRBORNE --> DEAD       : z < -800\n(fell off world)
+
+BOUNCING --> AIRBORNE   : vz > 0\n(ball lifts off again)
+BOUNCING --> ON_PLATE   : impact_speed < MIN_BOUNCE\n(energy dissipated)
+
+ON_PLATE --> AIRBORNE   : vz > threshold\n(re-lift)
+ON_PLATE --> DEAD       : dist > PLATE_SIZE\n(rolled off edge)
+ON_PLATE --> ORBIT_TRACKING : [O] key pressed
+
+ORBIT_TRACKING --> ON_PLATE : [O] key toggled off
+ORBIT_TRACKING --> DEAD     : dist > PLATE_SIZE
+
+DEAD --> IDLE           : Auto-reset\n(ball = None)
+
+' ── Global reset ──────────────────────────────────────
+' Dùng hướng up/down cho các mũi tên reset để chúng luồn ra viền ngoài, không cắt ngang sơ đồ
+DRAGGING    -[dashed]- up -> IDLE : [R] Reset
+AIRBORNE    -[dashed]- up -> IDLE : [R] Reset
+ON_PLATE    -[dashed]- up -> IDLE : [R] Reset
+BOUNCING    -[dashed]- up -> IDLE : [R] Reset
+ORBIT_TRACKING -[dashed]- up -> IDLE : [R] Reset
+DEAD        -[dashed]- up -> IDLE : [R] Reset
+
+@enduml
