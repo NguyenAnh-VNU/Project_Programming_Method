@@ -8,18 +8,19 @@ WIDTH, HEIGHT  = 1380, 780
 SIM_W          = 900
 PANEL_W        = WIDTH - SIM_W
 FPS            = 60
-PLATE_SIZE     = 150
+PLATE_SIZE     = 300
 BALL_RADIUS    = 12
-GRAVITY        = 9.81 * 300          # px/s²
-MAX_TILT       = 22                  # degrees
-FRICTION       = 0.9995              # per-frame rolling friction
-MAX_BALL_SPEED = 800.0               # [OPT] velocity cap – prevents runaway
+GRAVITY        = 9.81 * 300
+MAX_TILT       = 22
+FRICTION       = 0.9995
+MAX_BALL_SPEED = 800.0
 
 # ─── Bounce constants ─────────────────────────────────────────────────────────
 RESTITUTION      = 0.62
-BOUNCE_FRICTION  = 0.91
+BOUNCE_FRICTION  = 0.97 
 MIN_BOUNCE_SPEED = 30.0
 BOUNCE_SPIN      = 0.04
+AIR_DRIFT        = 0.18 
 
 # ─── Orbit mode constants ─────────────────────────────────────────────────────
 ORBIT_RADIUS = 160.0
@@ -52,10 +53,7 @@ LEG_COL_OUTER = (0,  180, 220)
 LEG_COL_INNER = (0,  255, 200)
 LEG_JOINT_COL = (255, 220, 60)
 LEG_FOOT_COL  = (60, 120, 180)
-
-# [OPT] Precomputed constant — avoids sqrt every frame in boundary check
 _PLATE_SIZE_SQ = PLATE_SIZE * PLATE_SIZE
-
 
 # ─── Camera ───────────────────────────────────────────────────────────────────
 class Camera:
@@ -104,15 +102,9 @@ class Camera:
         self.azimuth = 45.0; self.elevation = 30.0
         self.zoom    = 0.80; self.pan_x = 0.0; self.pan_y = 0.0
 
-
 # ─── PID Controller ───────────────────────────────────────────────────────────
 class PIDController:
-    """
-    [FIX] Derivative is now EMA-filtered (alpha=0.25) to eliminate the
-    large 'derivative kick' that occurred every time pid.reset() was called
-    (prev_error jumped from 0 to current_error in one frame).
-    [OPT] Integral clamped tighter (+-400 instead of +-600) to reduce windup.
-    """
+
     def __init__(self, kp=0.08, ki=0.0005, kd=0.35):
         self.kp = kp; self.ki = ki; self.kd = kd
         self._integral       = 0.0
@@ -133,7 +125,6 @@ class PIDController:
     def reset(self):
         self._integral = 0.0; self._prev_error = 0.0; self._deriv_filtered = 0.0
 
-
 # ─── Ball ─────────────────────────────────────────────────────────────────────
 class Ball:
     def __init__(self, x=0.0, y=0.0, z=240.0, vx=0.0, vy=0.0, vz=0.0):
@@ -152,7 +143,6 @@ class Ball:
             self.bounce_flash -= dt * 1000
         self.trail.append((self.x, self.y, self.z))
 
-        # [OPT] Precompute trig once — used in both branches + boundary check
         tx_r   = math.radians(tilt_x)
         ty_r   = math.radians(tilt_y)
         sin_tx = math.sin(tx_r)
@@ -160,10 +150,10 @@ class Ball:
 
         if not self.on_plate:
             # ── Airborne ─────────────────────────────────────────────────────
-            # [FIX] Removed incorrect 0.15-factor horizontal gravity when in
-            # air. Plate tilt cannot push a ball that is not touching it —
-            # only gravity (vz) acts during flight. vx/vy remain constant
-            # (parabolic arc). Old code: ax = sin(tilt)*GRAVITY*0.15 was wrong.
+            ax_air = sin_ty * GRAVITY * AIR_DRIFT
+            ay_air = sin_tx * GRAVITY * AIR_DRIFT
+            self.vx += ax_air * dt
+            self.vy += ay_air * dt
             self.vz -= GRAVITY * dt
             self.z  += self.vz * dt
             self.x  += self.vx * dt
@@ -179,7 +169,6 @@ class Ball:
             ay = sin_tx * GRAVITY
             self.vx = (self.vx + ax * dt) * FRICTION
             self.vy = (self.vy + ay * dt) * FRICTION
-            # [OPT] Velocity cap — prevents runaway after hard pushes
             spd = math.hypot(self.vx, self.vy)
             if spd > MAX_BALL_SPEED:
                 s = MAX_BALL_SPEED / spd
@@ -189,13 +178,10 @@ class Ball:
             self.z  = self.x * sin_ty - self.y * sin_tx
             if self.vz > MIN_BOUNCE_SPEED * 0.1:
                 self.on_plate = False
-            # [OPT] Squared distance — avoids sqrt every frame
             if self.x * self.x + self.y * self.y > _PLATE_SIZE_SQ:
                 self.alive = False
 
     def _bounce(self, sin_tx, sin_ty, plate_z, plate, restitution):
-        # [FIX] Accepts pre-computed sin values + restitution as argument.
-        # Removes dependency on global RESTITUTION (was mutated via 'global').
         self.z = plate_z
         impact_speed = abs(self.vz)
         if impact_speed < MIN_BOUNCE_SPEED:
@@ -213,7 +199,6 @@ class Ball:
                 strength = min(abs(self.vz) / 400, 3.0)
                 plate.impact_x -= (self.vy / 300) * strength
                 plate.impact_y -= (self.vx / 300) * strength
-
 
 # ─── Plate ────────────────────────────────────────────────────────────────────
 class Plate:
@@ -236,14 +221,12 @@ class Plate:
         self.tilt_x = max(-MAX_TILT, min(MAX_TILT, self.tilt_x))
         self.tilt_y = max(-MAX_TILT, min(MAX_TILT, self.tilt_y))
 
-
 # ─── UIWidget (base) ──────────────────────────────────────────────────────────
 class UIWidget:
     def __init__(self, x, y, w, h, label):
         self.rect = pygame.Rect(x, y, w, h); self.label = label
     def draw(self, surf, font): raise NotImplementedError
     def handle(self, event): pass
-
 
 # ─── Slider ───────────────────────────────────────────────────────────────────
 class Slider(UIWidget):
@@ -278,7 +261,6 @@ class Slider(UIWidget):
             r = (event.pos[0] - self.rect.x) / self.rect.w
             self.value = self.vmin + max(0.0, min(1.0, r)) * (self.vmax - self.vmin)
 
-
 # ─── Error Graph ──────────────────────────────────────────────────────────────
 class ErrorGraph(UIWidget):
     def __init__(self, x, y, w, h, label, color):
@@ -302,21 +284,13 @@ class ErrorGraph(UIWidget):
         surf.blit(font.render(self.label, True, self.color),
                   (self.rect.x + 5, self.rect.y + 4))
 
-
 # ─── ToggleMode (base) ────────────────────────────────────────────────────────
 class ToggleMode:
     def __init__(self): self.active = False
     def toggle(self):   self.active = not self.active
 
-
 # ─── Push Aimer ───────────────────────────────────────────────────────────────
 class PushAimer(ToggleMode):
-    """
-    [RENAMED] ThrowAimer → PushAimer.
-    [CLEANED] Removed dead methods: get_throw_params(), throw_angle_v.
-    These were only used by the old 'throw ball in arc' logic which has been
-    replaced by the realistic 'push ball on plate' impulse system.
-    """
     def __init__(self):
         super().__init__()
         self.aiming   = False
@@ -338,10 +312,8 @@ class PushAimer(ToggleMode):
         wy =  dx * math.sin(az) + ry * math.cos(az)
         return wx, wy
 
-
 # ─── Orbit Controller ─────────────────────────────────────────────────────────
 class OrbitController(ToggleMode):
-    # [CLEANED] Removed pointless toggle() override (was just super().toggle())
     def __init__(self):
         super().__init__()
         self.angle = 0.0; self.radius = ORBIT_RADIUS; self.speed = ORBIT_SPEED
@@ -354,7 +326,6 @@ class OrbitController(ToggleMode):
             return (self.radius * math.cos(self.angle),
                     self.radius * math.sin(self.angle))
         return 0.0, 0.0
-
 
 # ─── App ──────────────────────────────────────────────────────────────────────
 class App:
@@ -386,14 +357,9 @@ class App:
         self.drag_z         = 260.0
         self.drag_lift_base = 260.0
         self.drag_sy_base   = 0
-
-        # [OPT] Per-frame tilt trig cache — set by _cache_tilt() each frame
         self._ctx = 1.0; self._stx = 0.0
         self._cty = 1.0; self._sty = 0.0
-
-        # [OPT] Reusable alpha surface for plate fill — no new alloc each frame
         self._plate_surf = pygame.Surface((SIM_W, HEIGHT), pygame.SRCALPHA)
-
         px = SIM_W + 18
         pw = PANEL_W - 36
 
@@ -420,20 +386,18 @@ class App:
             self.sl_push_max, self.sl_push_sens, self.sl_push_scl,
             self.sl_orbit_r, self.sl_orbit_s,
         ]
-
+        
     # ── Projection helpers ────────────────────────────────────────────────────
     def _proj(self, x, y, z):
         return self.cam.project(x, y, z, self.cx, self.cy)
 
     def _cache_tilt(self):
-        """[OPT] Precompute plate tilt sin/cos once per frame."""
         tx_r = math.radians(self.plate.tilt_x)
         ty_r = math.radians(self.plate.tilt_y)
         self._ctx = math.cos(tx_r); self._stx = math.sin(tx_r)
         self._cty = math.cos(ty_r); self._sty = math.sin(ty_r)
 
     def _tp(self, x, y, z):
-        """Rotate local plate coords using cached trig."""
         y2 =  y * self._ctx - z * self._stx
         z2 =  y * self._stx + z * self._ctx
         x3 =  x * self._cty + z2 * self._sty
@@ -483,8 +447,6 @@ class App:
             self._proj_tp(P * math.cos(2*math.pi*i/SEGS),
                           P * math.sin(2*math.pi*i/SEGS), 0)
             for i in range(SEGS)]
-
-        # [OPT] Clear & redraw cached surface — no new 900x780 alloc each frame
         self._plate_surf.fill((0, 0, 0, 0))
         pygame.draw.polygon(self._plate_surf, (20, 140, 185, 140), circle_pts)
         self.screen.blit(self._plate_surf, (0, 0))
@@ -506,8 +468,6 @@ class App:
             op = [self._proj_tp(r*math.cos(2*math.pi*i/SEGS),
                                 r*math.sin(2*math.pi*i/SEGS), 1)
                   for i in range(SEGS)]
-            # [FIX] Use dim RGB color instead of RGBA-in-color (alpha ignored
-            # on non-SRCALPHA surface)
             dim = (ORBIT_COL[0]//2, ORBIT_COL[1]//2, ORBIT_COL[2]//2)
             for i in range(0, SEGS, 2):
                 pygame.draw.line(self.screen, dim, op[i], op[(i+1)%SEGS], 1)
@@ -539,8 +499,6 @@ class App:
         joint_r     = max(4, int(6 * self.cam.zoom))
         foot_w      = max(8, int(14 * self.cam.zoom))
         foot_h      = max(3, int(5 * self.cam.zoom))
-
-        # [OPT] Build foot surface once, reuse for all 3 legs
         foot_surf = pygame.Surface((foot_w*2, foot_h*2), pygame.SRCALPHA)
         pygame.draw.ellipse(foot_surf, (*LEG_FOOT_COL, 220), foot_surf.get_rect())
         pygame.draw.ellipse(foot_surf, (120,200,255,160), foot_surf.get_rect(), 1)
@@ -598,10 +556,6 @@ class App:
     def _draw_ball(self):
         b = self.ball
         if b is None or not b.alive: return
-
-        # [FIX] Trail uses RGB brightness fading — the old code passed alpha as
-        # 4th color component to pygame.draw.line on a non-SRCALPHA surface,
-        # where alpha is silently ignored. The trail was fully opaque all along.
         if len(b.trail) > 1:
             tpts = [self._proj(tx,ty,tz) for tx,ty,tz in b.trail]
             n = len(tpts)
@@ -770,7 +724,7 @@ class App:
                         self.dragging_ball = False
                     if event.key == pygame.K_c:
                         self.cam.reset()
-                    if event.key == pygame.K_u:   # [CHANGED] T → U
+                    if event.key == pygame.K_u:   
                         self.pusher.toggle()
                         self.dragging_ball = False
                     if event.key == pygame.K_o:
@@ -781,7 +735,6 @@ class App:
                     mx, my = event.pos
                     if mx < SIM_W:
                         if self.pusher.active:
-                            # Place ball on plate if none exists
                             if self.ball is None or not self.ball.alive:
                                 wx,wy = self._screen_to_world(mx, my, 0.0)
                                 dist  = math.hypot(wx, wy)
@@ -792,7 +745,6 @@ class App:
                                 self.ball = Ball(wx, wy, z=bz)
                                 self.ball.on_plate = True; self.ball.alive = True
                                 self.pid_x.reset(); self.pid_y.reset()
-                            # Snap aimer origin to ball's screen coords
                             bx3,by3,bz3 = self._tp(
                                 self.ball.x, self.ball.y,
                                 self.ball.z + BALL_RADIUS*0.5)
@@ -838,8 +790,6 @@ class App:
                                 self.ball.vy      += wyd/ln * push_power
                                 self.ball.vz       = 0.0
                                 self.ball.on_plate = True
-                                # [OPT] Soft-reset integral to reduce overshoot
-                                # on new trajectory after push
                                 self.pid_x._integral *= 0.35
                                 self.pid_y._integral *= 0.35
 
@@ -852,8 +802,6 @@ class App:
                 pid.ki = self.sl_ki.value
                 pid.kd = self.sl_kd.value
 
-            # [FIX] Removed 'global RESTITUTION' antipattern — value is now
-            # passed directly as a parameter into Ball.update()
             restitution = self.sl_bounce.value
 
             self.orbit.radius = self.sl_orbit_r.value
@@ -864,7 +812,6 @@ class App:
             if self.ball and self.ball.alive and not self.dragging_ball:
                 err_x = self.ball.x - target_x
                 err_y = self.ball.y - target_y
-                # [OPT] Raised off-plate weight 0.5→0.7 for faster recovery
                 weight     = 1.0 if self.ball.on_plate else 0.7
                 self.tty   = -self.pid_x.update(err_x, dt) * weight
                 self.ttx   = -self.pid_y.update(err_y, dt) * weight
@@ -888,9 +835,7 @@ class App:
             for gy in range(0, HEIGHT, 44):
                 pygame.draw.line(self.screen,(13,16,26),(0,gy),(SIM_W,gy))
 
-            # [OPT] Cache trig once for entire render pass
             self._cache_tilt()
-
             self._draw_legs()
             self._draw_plate()
             self._draw_ball()
@@ -903,7 +848,6 @@ class App:
                 (14,10))
             pygame.display.flip()
             self.clock.tick(FPS)
-
 
 if __name__ == "__main__":
     App().run()

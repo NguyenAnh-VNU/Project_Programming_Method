@@ -1,26 +1,18 @@
-@startuml Ball_Plate_State_Diagram
-
-' 1. Bố cục từ trái sang phải (phù hợp với slide ngang)
+@startuml 
 left to right direction
 
-' 2. Giới hạn kích thước xuất ảnh tối đa bằng đúng chuẩn slide PowerPoint 1080p (16:9)
-scale max 1920 width
-scale max 1080 height
-
-' 3. Điều chỉnh khoảng cách để ép sơ đồ trải dài ra
-skinparam ranksep 100    ' Tăng khoảng cách ngang giữa các state
-skinparam nodesep 50     ' Thu gọn khoảng cách dọc giữa các state
-
-' 4. Dùng nét gấp khúc vuông góc giúp sơ đồ gọn gàng, không bị rối mắt trên màn hình lớn
-skinparam linetype ortho
+scale 1000 width
+scale 1000 height
+skinparam nodesep 150
+skinparam ranksep 80
 
 skinparam state {
   BackgroundColor LightBlue
   BorderColor DarkBlue
-  FontSize 13
+  FontSize 50
   ArrowColor DarkSlateGray
 }
-
+skinparam ArrowFontSize 30
 skinparam backgroundColor White
 skinparam shadowing false
 
@@ -63,18 +55,33 @@ state ORBIT_TRACKING {
   chasing : PID chases moving target
 }
 
+state PUSH_MODE {
+  [*] --> push_idle
+  push_idle : PushAimer active
+  push_idle : LMB click places ball if none exists
+  --
+  [*] --> aiming
+  aiming : Drag arrow drawn on screen
+  aiming : start_sx/sy locked to ball position
+  aiming : end_sx/sy follows cursor
+  --
+  [*] --> impulse_applied
+  impulse_applied : vx += wxd/ln × push_power
+  impulse_applied : vy += wyd/ln × push_power
+  impulse_applied : vz = 0, on_plate = True
+  impulse_applied : PID integral × 0.35 (soft reset)
+}
+
 state DEAD {
   [*] --> lost
   lost : drops++
   lost : ball = None
 }
 
-' ── Main transitions ──────────────────────────────────
-
 IDLE --> DRAGGING       : LMB click\n(normal mode)
 IDLE --> AIRBORNE       : [T] Throw mode\nLMB release
 
-DRAGGING --> DRAGGING   : Mouse move\n(update XY and Z)
+DRAGGING -> DRAGGING   : Mouse move\n(update XY and Z)
 DRAGGING --> AIRBORNE   : LMB release\n(vx=vy=vz=0)
 
 AIRBORNE --> BOUNCING   : z ≤ plate_z AND\nimpact_speed ≥ MIN_BOUNCE
@@ -87,19 +94,31 @@ BOUNCING --> ON_PLATE   : impact_speed < MIN_BOUNCE\n(energy dissipated)
 ON_PLATE --> AIRBORNE   : vz > threshold\n(re-lift)
 ON_PLATE --> DEAD       : dist > PLATE_SIZE\n(rolled off edge)
 ON_PLATE --> ORBIT_TRACKING : [O] key pressed
+ON_PLATE --> PUSH_MODE  : [U] key pressed
 
 ORBIT_TRACKING --> ON_PLATE : [O] key toggled off
 ORBIT_TRACKING --> DEAD     : dist > PLATE_SIZE
+ORBIT_TRACKING --> PUSH_MODE : [U] key pressed
+
+PUSH_MODE --> ON_PLATE  : [U] key toggled off\n(pusher.active = False)
+PUSH_MODE --> DEAD      : dist > PLATE_SIZE\n(ball rolls off edge)
+
+' ── Push Mode internal flow ───────────────
+PUSH_MODE : push_idle --> aiming     : LMB press on sim area\n(ball exists)
+PUSH_MODE : aiming --> impulse_applied : LMB release\n(drag length > 4 px)
+PUSH_MODE : impulse_applied --> push_idle : impulse delivered\naimer reset
 
 DEAD --> IDLE           : Auto-reset\n(ball = None)
 
-' ── Global reset ──────────────────────────────────────
-' Dùng hướng up/down cho các mũi tên reset để chúng luồn ra viền ngoài, không cắt ngang sơ đồ
-DRAGGING    -[dashed]- up -> IDLE : [R] Reset
-AIRBORNE    -[dashed]- up -> IDLE : [R] Reset
-ON_PLATE    -[dashed]- up -> IDLE : [R] Reset
-BOUNCING    -[dashed]- up -> IDLE : [R] Reset
-ORBIT_TRACKING -[dashed]- up -> IDLE : [R] Reset
-DEAD        -[dashed]- up -> IDLE : [R] Reset
+' ==========================================
+' 4. GLOBAL RESET COMMANDS
+' ==========================================
+DRAGGING       -[dashed]-> IDLE : [R] Reset
+AIRBORNE       -[dashed]-> IDLE : [R] Reset
+ON_PLATE       -[dashed]-> IDLE : [R] Reset
+BOUNCING       -[dashed]-> IDLE : [R] Reset
+ORBIT_TRACKING -[dashed]-> IDLE : [R] Reset
+PUSH_MODE      -[dashed]-> IDLE : [R] Reset
+DEAD           -[dashed]-> IDLE : [R] Reset
 
 @enduml
