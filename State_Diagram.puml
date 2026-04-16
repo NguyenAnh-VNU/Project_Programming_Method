@@ -12,7 +12,7 @@ skinparam state {
   FontSize 50
   ArrowColor DarkSlateGray
 }
-skinparam ArrowFontSize 30
+skinparam ArrowFontSize 35
 skinparam backgroundColor White
 skinparam shadowing false
 
